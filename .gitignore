@@ -1,0 +1,7 @@
+# 运行时产物
+watch.log
+state.json
+cli_resume.out
+
+# macOS
+.DS_Store
