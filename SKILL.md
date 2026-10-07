@@ -125,6 +125,13 @@ codex exec resume <THREAD_ID> "继续" --skip-git-repo-check
 但 `payload_json` 的确切 schema 未知，需逆向 `Contents/Resources/codex`（220MB Rust 二进制）。
 如果哪天 UI 注入长期不可用，值得花时间逆向这条路。
 
+### 更正（2026-10）：`codex://threads/<id>` 深链**可导航**、不能发消息
+早先「asar 里 grep 不到 `codex://<route>`」的结论不对——普通 `grep` 会被 minify 超长行挡住，
+用 `grep -aoE`（或 Python 按字节扫）能找到 10 处 `codex://threads` 路由引用。
+实测 `open "codex://threads/<uuid>"` 能把 App 前台窗口精确切到该对话（仅导航，不代发消息）。
+所以多会话场景的正确做法：**深链导航到目标 thread → 再走 fire_ui 的 UI 注入**，
+就能给任意指定 thread 续跑，而不是只能等它恰好是「mtime 最新」的那个。
+
 ## 排错速查
 | 现象 | 原因 | 处理 |
 |---|---|---|
@@ -140,8 +147,10 @@ codex exec resume <THREAD_ID> "继续" --skip-git-repo-check
 | 找不到会话 | 目标对话太久没动（>72h） | 调 `CANDIDATE_WINDOW`，或让用户在 App 里发一条消息 |
 
 ## 已知没走通的路（别再重复踩）
-- **`codex://` 深链接**：ChatGPT.app 的 Info.plist 里注册了 `codex` scheme，
-  但在 `app.asar` 里 grep 不到任何 `codex://<route>` 字符串，无法构造出能发消息的链接。
+- **`codex://` 深链接发消息**：走不通（见下方 2026-10 更正——但**导航/切会话可用**）。
+  ChatGPT.app 的 Info.plist 注册了 `codex` scheme，`app.asar` 里也没有
+  `codex://threads/<id>?prompt=<text>` 这类「带参发消息」的处理器——
+  deep link 只做路由导航，不能代发消息。发消息仍需走 UI 注入。
 - **`~/.codex/ipc/ipc.sock`**：确实存在且被 ChatGPT 进程持有，但协议未公开，逆向成本高。
 - **`~/.codex/queue_1.sqlite` 的 `queued_items`**：表结构已知
   （`id, thread_id, payload_json, queue_order, created_at_ms, updated_at_ms` + 修订号触发器），
