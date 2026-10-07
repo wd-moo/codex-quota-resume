@@ -223,7 +223,45 @@ codex exec resume <THREAD_ID> "继续" --skip-git-repo-check
 
 ### 已探明但未采用的路
 
-- **`codex://` 深链接**：ChatGPT.app 的 Info.plist 注册了 `codex` scheme，但在 `app.asar` 里 grep 不到任何 `codex://<route>` 字符串，无法构造出能发消息的链接。
+#### 更正（2026-10）：`codex://threads/<id>` 深链**可以做会话导航**，只是不能发消息
+
+早先的结论「asar 里 grep 不到 `codex://<route>`，无法构造链接」不对。
+对当前版本 `app.asar` 做字节级扫描（普通 `grep` 会被 minify 后的超长行/编码挡住，
+要用 `grep -aoE` 或 Python 按字节 `re.finditer`），能找到 **10 处 `codex://threads`** 路由引用：
+`codex://launch`、`codex://settings`、`codex://review`、`codex://threads/<threadId>` 等。
+
+关键事实（本机实测）：
+
+1. **导航可用**：`open "codex://threads/<uuid>"` 会把 App 前台窗口精确切到该对话
+   （等价于在会话列表里点它）。`app.asar` 里可见它还支持
+   `?prompt=`、`?hostId=`、`?view=review`、`?artifact=` 等查询参数。
+2. **发消息不可用**：`?prompt=` 只是把文本预填进输入框的 deep link 形态，
+   路由层没有任何「直接发送」的处理器；要真正发出去仍得靠 UI 注入
+   （激活 → pbcopy → Cmd+V → 回车）。
+
+这补上了 UI 注入方案的一个短板：原脚本只会往「mtime 最新的会话」注入。
+配合深链先做 `open codex://threads/<uuid>` 导航再注入，就能**给任意指定 thread 续跑**，
+多会话并行时可以按顺序逐个恢复：
+
+```bash
+# 方法级示例：向指定 thread 注入「继续」（需辅助功能权限，同 fire_ui）
+resume_thread() {
+  local tid="$1"
+  open "codex://threads/${tid}"      # 1) 深链导航：把窗口切到目标对话
+  sleep 3
+  osascript -e 'tell application id "com.openai.codex" to activate'
+  sleep 2
+  printf '继续' | pbcopy             # 2) UI 注入：与 fire_ui 相同
+  osascript -e 'tell application "System Events" to keystroke "v" using command down'
+  sleep 1
+  osascript -e 'tell application "System Events" to key code 36'
+  sleep 1
+}
+# 多线程顺序恢复：resume_thread <id-A>; sleep 20; resume_thread <id-B>
+```
+
+其余未采用的路：
+
 - **`~/.codex/ipc/ipc.sock`**：确实存在且被 ChatGPT 进程持有，但协议未公开，逆向成本高。
 - **`~/.codex/queue_1.sqlite` 的 `queued_items`**：表结构已知（`id, thread_id, payload_json, queue_order, created_at_ms, updated_at_ms` + 修订号触发器），疑似 App 自带的消息队列，插一行理论上能让 App 自己发消息（免权限、不抢焦点）。但 `payload_json` 的确切 schema 未知（需逆向 `Contents/Resources/codex`，220MB Rust 二进制），且表通常是空的、拿不到样本。**若 UI 注入长期不可用，这是最值得投入的替代方案。**
 
